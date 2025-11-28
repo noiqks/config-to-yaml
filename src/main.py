@@ -49,6 +49,8 @@ def tokenize(text):
             raise SyntaxError(f'неизвестный символ в позиции {pos}: {text[pos]}')
     return tokens
 
+#синтаксич. анализ
+
 def main():
     if len(sys.argv) != 3:
         print("Использование: python main.py <input_file> <output_file>")
