@@ -49,7 +49,65 @@ def tokenize(text):
             raise SyntaxError(f'неизвестный символ в позиции {pos}: {text[pos]}')
     return tokens
 
-#синтаксич. анализ
+#парсер
+def parse(tokens):
+    pos = 0
+    data = {}
+
+    def expect(token_type):
+        nonlocal pos
+        if pos >= len(tokens) or tokens[pos].type != token_type:
+            raise SyntaxError(f"ожидался {token_type}, а получен {tokens[pos] if pos < len(tokens) else 'EOF'}")
+        pos += 1
+
+    while pos < len(tokens):
+        tok = tokens[pos]
+
+        if tok.type == 'IDENT':
+            name = tok.value
+            pos += 1
+            expect('IS')
+
+            # число
+            if tokens[pos].type == 'NUMBER':
+                val = int(tokens[pos].value, 8)  #перевод из octal
+                pos += 1
+
+            # список { ... }
+            elif tokens[pos].type == 'LBRACE':
+                pos += 1
+                arr = []
+                while tokens[pos].type != 'RBRACE':
+                    if tokens[pos].type == 'NUMBER':
+                        arr.append(int(tokens[pos].value, 8))
+                        pos += 1
+                    if tokens[pos].type == 'COMMA':
+                        pos += 1
+                expect('RBRACE')
+                val = arr
+            else:
+                raise SyntaxError("Ожидалось число или список")
+
+            expect('SEMICOLON')
+            data[name] = val
+
+        #ссылка: [ IDENT ]
+        elif tok.type == 'LBRACKET':
+            pos += 1
+            if tokens[pos].type != 'IDENT':
+                raise SyntaxError("Ожидалось имя в []")
+            ref_name = tokens[pos].value
+            pos += 1
+            expect('RBRACKET')
+
+            print(f"ссылка [{ref_name}] → {data.get(ref_name)}")
+
+        else:
+            raise SyntaxError(f"Неожиданный токен {tok}")
+
+    return data
+
+
 
 def main():
     if len(sys.argv) != 3:
@@ -65,9 +123,11 @@ def main():
 
     #2. токенизация
     tokens = tokenize(clean_text)
-    print("\nсписок токенов:")
-    for t in tokens:
-        print(t)
+    
+    #3. парсер
+    parsed = parse(tokens)
+    print("\nрезультат парсинга:")
+    print(parsed)
 
 if __name__ == "__main__":
     main()
