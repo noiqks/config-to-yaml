@@ -53,81 +53,167 @@ def tokenize(text):
 def parse(tokens):
     pos = 0
     data = {}
+    errors = []
 
-    def expect(token_type):
+    def current():
+        return tokens[pos] if pos < len(tokens) else None
+
+    def advance():
         nonlocal pos
-        if pos >= len(tokens) or tokens[pos].type != token_type:
-            raise SyntaxError(f"ожидался {token_type}, а получен {tokens[pos] if pos < len(tokens) else 'EOF'}")
         pos += 1
 
+    def report_error(msg):
+        errors.append(msg)
+
+    def expect(token_type):
+        tok = current()
+        if tok is None:
+            report_error(f"ожидался {token_type}, но достигнут конец файла")
+            return None
+
+        if tok.type != token_type:
+            report_error(f"ожидался {token_type}, а получен {tok}")
+            return None
+
+        advance()
+        return tok
+
+    def synchronize():
+        nonlocal pos
+        while pos < len(tokens):
+            if tokens[pos].type in ('SEMICOLON', 'RBRACE', 'RBRACKET'):
+                pos += 1
+                break
+            pos += 1
+
     while pos < len(tokens):
-        tok = tokens[pos]
+        tok = current()
+        if tok is None:
+            break
 
         if tok.type == 'IDENT':
             name = tok.value
-            pos += 1
-            expect('IS')
+            advance()
 
-            # число
-            if tokens[pos].type == 'NUMBER':
-                val = int(tokens[pos].value, 8)  #перевод из octal
-                pos += 1
+            if not expect('IS'):
+                synchronize()
+                continue
 
-            # список { ... }
-            elif tokens[pos].type == 'LBRACE':
-                pos += 1
+            tok = current()
+
+            #число
+            if tok and tok.type == 'NUMBER':
+                val = int(tok.value, 8)
+                advance()
+
+            #список
+            elif tok and tok.type == 'LBRACE':
+                advance()
                 arr = []
-                while tokens[pos].type != 'RBRACE':
-                    if tokens[pos].type == 'NUMBER':
-                        arr.append(int(tokens[pos].value, 8))
-                        pos += 1
-                    if tokens[pos].type == 'COMMA':
-                        pos += 1
-                expect('RBRACE')
+
+                while True:
+                    tok = current()
+                    if tok is None:
+                        report_error("не закрыта фигурная скобка { ... }")
+                        break
+
+                    if tok.type == 'NUMBER':
+                        arr.append(int(tok.value, 8))
+                        advance()
+                        tok = current()
+
+                        if tok and tok.type == 'COMMA':
+                            advance()
+                            continue
+                        elif tok and tok.type == 'RBRACE':
+                            break
+                        else:
+                            report_error(f"недопустимый токен в списке: {tok}")
+                            break
+
+                    elif tok.type == 'RBRACE':
+                        break
+                    else:
+                        report_error(f"недопустимый элемент внутри списка: {tok}")
+                        break
+
+                if not expect('RBRACE'):
+                    synchronize()
+                    continue
+
                 val = arr
+
             else:
-                raise SyntaxError("Ожидалось число или список")
+                report_error(f"ожидалось число или {{...}}, а получено {tok}")
+                synchronize()
+                continue
 
-            expect('SEMICOLON')
+            if not expect('SEMICOLON'):
+                synchronize()
+                continue
+
             data[name] = val
-
-        #ссылка: [ IDENT ]
+        
         elif tok.type == 'LBRACKET':
-            pos += 1
-            if tokens[pos].type != 'IDENT':
-                raise SyntaxError("Ожидалось имя в []")
-            ref_name = tokens[pos].value
-            pos += 1
+            advance()
+
+            ident_tok = expect('IDENT')
+            ident = ident_tok.value if ident_tok else None
+
+            if ident and ident not in data:
+                report_error(f"ссылка [{ident}] на неизвестную переменную")
+
             expect('RBRACKET')
 
-            print(f"ссылка [{ref_name}] → {data.get(ref_name)}")
-
         else:
-            raise SyntaxError(f"Неожиданный токен {tok}")
+            report_error(f"неожиданный токен {tok}")
+            advance()
 
-    return data
+    return data, errors
 
 
 
 def main():
     if len(sys.argv) != 3:
-        print("Использование: python main.py <input_file> <output_file>")
+        print("использование: python main.py <input_file> <output_file>")
         sys.exit(1)
 
     input_file = sys.argv[1]
     output_file = sys.argv[2]
 
-    #1.чтение файла и обработка файла
     text = read_file(input_file)
-    clean_text = remove_com(text)
+    cleaned = remove_com(text)
 
-    #2. токенизация
-    tokens = tokenize(clean_text)
-    
-    #3. парсер
-    parsed = parse(tokens)
+    tokens = tokenize(cleaned)
+
+    print("токены:")
+    for t in tokens:
+        print("  ", t)
+
+    data, errors = parse(tokens)
+
     print("\nрезультат парсинга:")
-    print(parsed)
+    print(data)
+
+    if errors:
+        print("\nошибки синтаксиса:")
+        for i, e in enumerate(errors, 1):
+            print(f"  {i}) {e}")
+    else:
+        print("\nnошибок нет.")
+
+
+    # #1.чтение файла и обработка файла
+    # text = read_file(input_file)
+    # clean_text = remove_com(text)
+
+    # #2. токенизация
+    # tokens = tokenize(clean_text)
+    
+    # #3. парсер
+    # parsed = parse(tokens)
+    # print("\nрезультат парсинга:")
+    # print(parsed)
 
 if __name__ == "__main__":
     main()
