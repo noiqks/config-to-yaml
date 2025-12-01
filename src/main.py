@@ -62,114 +62,155 @@ def parse(tokens):
         nonlocal pos
         pos += 1
 
-    def report_error(msg):
-        errors.append(msg)
-
     def expect(token_type):
+        nonlocal pos
         tok = current()
         if tok is None:
-            report_error(f"ожидался {token_type}, но достигнут конец файла")
+            errors.append(f"ожидался {token_type}, но достигнут конец файла")
             return None
 
         if tok.type != token_type:
-            report_error(f"ожидался {token_type}, а получен {tok}")
+            errors.append(f"ожидался {token_type}, а получен {tok}")
             return None
 
-        advance()
+        pos += 1
         return tok
-
-    def synchronize():
-        nonlocal pos
-        while pos < len(tokens):
-            if tokens[pos].type in ('SEMICOLON', 'RBRACE', 'RBRACKET'):
-                pos += 1
-                break
-            pos += 1
 
     while pos < len(tokens):
         tok = current()
-        if tok is None:
-            break
-
-        if tok.type == 'IDENT':
+        if tok.type == "IDENT":
             name = tok.value
             advance()
 
-            if not expect('IS'):
-                synchronize()
-                continue
-
+            expect("IS")
             tok = current()
 
             #число
-            if tok and tok.type == 'NUMBER':
-                val = int(tok.value, 8)
+            if tok and tok.type == "NUMBER":
+                try:
+                    val = int(tok.value, 8)
+                except:
+                    val = None
+                    errors.append(f"некорректное число: {tok.value}")
                 advance()
 
             #список
-            elif tok and tok.type == 'LBRACE':
+            elif tok and tok.type == "LBRACE":
                 advance()
                 arr = []
 
                 while True:
                     tok = current()
+
                     if tok is None:
-                        report_error("не закрыта фигурная скобка { ... }")
+                        errors.append("не закрыта фигурная скобка { ... }")
                         break
 
-                    if tok.type == 'NUMBER':
-                        arr.append(int(tok.value, 8))
+                    if tok.type == "NUMBER":
+                        try:
+                            arr.append(int(tok.value, 8))
+                        except:
+                            errors.append(f"некорректное число: {tok.value}")
                         advance()
                         tok = current()
 
-                        if tok and tok.type == 'COMMA':
+                        if tok and tok.type == "COMMA":
                             advance()
                             continue
-                        elif tok and tok.type == 'RBRACE':
+                        elif tok and tok.type == "RBRACE":
                             break
                         else:
-                            report_error(f"недопустимый токен в списке: {tok}")
+                            errors.append(f"недопустимый токен в списке: {tok}")
+                            advance()
                             break
 
-                    elif tok.type == 'RBRACE':
+                    elif tok.type == "RBRACE":
                         break
+
                     else:
-                        report_error(f"недопустимый элемент внутри списка: {tok}")
+                        errors.append(f"недопустимый элемент внутри списка: {tok}")
+                        advance()
                         break
 
-                if not expect('RBRACE'):
-                    synchronize()
-                    continue
-
+                expect("RBRACE")
                 val = arr
 
-            else:
-                report_error(f"ожидалось число или {{...}}, а получено {tok}")
-                synchronize()
-                continue
+            elif tok and tok.type == "LBRACKET":
+                errors.append("ссылки [x] нельзя использовать справа от is")
+                advance()
+                while current() and current().type != "RBRACKET":
+                    advance()
+                expect("RBRACKET")
+                val = None
 
-            if not expect('SEMICOLON'):
-                synchronize()
-                continue
+            else:
+                errors.append(f"ожидалось число или {{...}}, а получено {tok}")
+                advance()
+                val = None
+            expect("SEMICOLON")
 
             data[name] = val
-        
-        elif tok.type == 'LBRACKET':
+            continue
+
+        elif tok.type == "LBRACKET":
             advance()
 
-            ident_tok = expect('IDENT')
+            ident_tok = expect("IDENT")
             ident = ident_tok.value if ident_tok else None
 
-            if ident and ident not in data:
-                report_error(f"ссылка [{ident}] на неизвестную переменную")
+            expect("RBRACKET")
 
-            expect('RBRACKET')
+            if ident is None:
+                errors.append("некорректная ссылка [???]")
+                continue
+
+            #если есть ссылка вне присваивания
+            ref_name = f"_ref_at_{pos}"
+            data[ref_name] = ("ref", ident)
+
+            continue
 
         else:
-            report_error(f"неожиданный токен {tok}")
+            errors.append(f"неожиданный токен {tok}")
             advance()
 
     return data, errors
+
+
+#константы
+def resolve_constants(data):
+    errors = {}
+    resolved = {}
+
+    def resolve_value(val, where):
+        #число
+        if isinstance(val, int):
+            return val
+
+        #список
+        if isinstance(val, list):
+            new_list = []
+            for item in val:
+                resolved_item = resolve_value(item, where)
+                new_list.append(resolved_item)
+            return new_list
+
+        #ссылка
+        if isinstance(val, tuple) and val[0] == "ref":
+            name = val[1]
+            if name not in data:
+                errors.setdefault(where, []).append(f"неизвестная константа [{name}]")
+                return None
+            return resolve_value(data[name], name)
+
+        return val
+
+    for key, val in data.items():
+        resolved[key] = resolve_value(val, key)
+
+    return resolved, errors
+
+
 
 
 
@@ -181,39 +222,36 @@ def main():
     input_file = sys.argv[1]
     output_file = sys.argv[2]
 
+    #1.чтение файла и обработка файла
     text = read_file(input_file)
-    cleaned = remove_com(text)
+    clean_text = remove_com(text)
 
-    tokens = tokenize(cleaned)
-
-    print("токены:")
-    for t in tokens:
-        print("  ", t)
-
-    data, errors = parse(tokens)
-
-    print("\nрезультат парсинга:")
-    print(data)
-
-    if errors:
-        print("\nошибки синтаксиса:")
-        for i, e in enumerate(errors, 1):
-            print(f"  {i}) {e}")
-    else:
-        print("\nnошибок нет.")
-
-
-    # #1.чтение файла и обработка файла
-    # text = read_file(input_file)
-    # clean_text = remove_com(text)
-
-    # #2. токенизация
-    # tokens = tokenize(clean_text)
+    #2. токенизация
+    tokens = tokenize(clean_text)
     
-    # #3. парсер
-    # parsed = parse(tokens)
-    # print("\nрезультат парсинга:")
-    # print(parsed)
+    #3. парсер
+    parsed, errors = parse(tokens)
+    print("\nрезультат парсинга:")
+    print(parsed)
+    #4. ошибки синтаксиса
+    if errors: 
+        print("\nошибки синтаксиса:") 
+        for i, err in enumerate(errors, 1): 
+            print(f" {i}) {err}")
+
+    #5. константы
+    resolved, resolve_errors = resolve_constants(parsed)
+    print("\nпосле разрешения констант:")
+    print(resolved)
+    #ошибки 
+    if resolve_errors:
+        print("\nошибки разрешения констант:")
+        i = 1
+        for var, errs in resolve_errors.items():
+            for err in errs:
+                print(f"  {i}) {var}: {err}")
+                i += 1
+
 
 if __name__ == "__main__":
     main()
