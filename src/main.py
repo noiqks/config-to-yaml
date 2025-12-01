@@ -38,12 +38,11 @@ def tokenize(text):
     while pos < len(text):
         match = None
         for token_type, pattern in TOKEN_SPEC:
-            regax = re.compile(pattern)
-            match = regax.match(text, pos)
+            regex = re.compile(pattern)
+            match = regex.match(text, pos)
             if match:
-                if token_type != 'SKIP' : #пропускаем
-                    tok = Token(token_type, match.group(0))
-                    tokens.append(tok)
+                if token_type != 'SKIP':
+                    tokens.append(Token(token_type, match.group(0)))
                 pos = match.end()
                 break
         if not match:
@@ -64,117 +63,85 @@ def parse(tokens):
         pos += 1
 
     def expect(token_type):
-        nonlocal pos
         tok = current()
         if tok is None:
             errors.append(f"ожидался {token_type}, но достигнут конец файла")
             return None
-
         if tok.type != token_type:
             errors.append(f"ожидался {token_type}, а получен {tok}")
             return None
-
-        pos += 1
+        advance()
         return tok
+
+    def parse_value():
+        tok = current()
+        if tok is None:
+            errors.append("ожидалось значение, но конец файла")
+            return None
+        # число
+        if tok.type == "NUMBER":
+            advance()
+            try:
+                return int(tok.value, 8)
+            except:
+                errors.append(f"некорректное число: {tok.value}")
+                return None
+        # массив
+        elif tok.type == "LBRACE":
+            advance()
+            arr = []
+            while True:
+                tok = current()
+                if tok is None:
+                    errors.append("не закрыта фигурная скобка { ... }")
+                    break
+                if tok.type == "RBRACE":
+                    advance()
+                    break
+                val = parse_value()
+                if val is not None:
+                    arr.append(val)
+                tok = current()
+                if tok and tok.type == "COMMA":
+                    advance()
+                elif tok and tok.type == "RBRACE":
+                    continue
+                elif tok:
+                    errors.append(f"недопустимый токен в массиве: {tok}")
+                    advance()
+                    break
+            return arr
+        # ссылка
+        elif tok.type == "LBRACKET":
+            advance()
+            ident_tok = expect("IDENT")
+            ident = ident_tok.value if ident_tok else None
+            expect("RBRACKET")
+            if ident is None:
+                return None
+            return ("ref", ident)
+        else:
+            errors.append(f"ожидалось число, массив или ссылку, а получено {tok}")
+            advance()
+            return None
 
     while pos < len(tokens):
         tok = current()
         if tok.type == "IDENT":
             name = tok.value
             advance()
-
             expect("IS")
-            tok = current()
-
-            #число
-            if tok and tok.type == "NUMBER":
-                try:
-                    val = int(tok.value, 8)
-                except:
-                    val = None
-                    errors.append(f"некорректное число: {tok.value}")
-                advance()
-
-            #список
-            elif tok and tok.type == "LBRACE":
-                advance()
-                arr = []
-
-                while True:
-                    tok = current()
-
-                    if tok is None:
-                        errors.append("не закрыта фигурная скобка { ... }")
-                        break
-
-                    if tok.type == "NUMBER":
-                        try:
-                            arr.append(int(tok.value, 8))
-                        except:
-                            errors.append(f"некорректное число: {tok.value}")
-                        advance()
-                        tok = current()
-
-                        if tok and tok.type == "COMMA":
-                            advance()
-                            continue
-                        elif tok and tok.type == "RBRACE":
-                            break
-                        else:
-                            errors.append(f"недопустимый токен в списке: {tok}")
-                            advance()
-                            break
-
-                    elif tok.type == "RBRACE":
-                        break
-
-                    else:
-                        errors.append(f"недопустимый элемент внутри списка: {tok}")
-                        advance()
-                        break
-
-                expect("RBRACE")
-                val = arr
-
-            elif tok and tok.type == "LBRACKET":
-                errors.append("ссылки [x] нельзя использовать справа от is")
-                advance()
-                while current() and current().type != "RBRACKET":
-                    advance()
-                expect("RBRACKET")
-                val = None
-
-            else:
-                errors.append(f"ожидалось число или {{...}}, а получено {tok}")
-                advance()
-                val = None
+            val = parse_value()
             expect("SEMICOLON")
-
             data[name] = val
-            continue
-
+        # ссылка вне присваивания
         elif tok.type == "LBRACKET":
-            advance()
-
-            ident_tok = expect("IDENT")
-            ident = ident_tok.value if ident_tok else None
-
-            expect("RBRACKET")
-
-            if ident is None:
-                errors.append("некорректная ссылка [???]")
-                continue
-
-            #если есть ссылка вне присваивания
+            val = parse_value()
             ref_name = f"_ref_at_{pos}"
-            data[ref_name] = ("ref", ident)
-
-            continue
-
+            data[ref_name] = val
         else:
             errors.append(f"неожиданный токен {tok}")
             advance()
-
     return data, errors
 
 
@@ -184,26 +151,16 @@ def resolve_constants(data):
     resolved = {}
 
     def resolve_value(val, where):
-        #число
         if isinstance(val, int):
             return val
-
-        #список
         if isinstance(val, list):
-            new_list = []
-            for item in val:
-                resolved_item = resolve_value(item, where)
-                new_list.append(resolved_item)
-            return new_list
-
-        #ссылка
+            return [resolve_value(item, where) for item in val]
         if isinstance(val, tuple) and val[0] == "ref":
             name = val[1]
             if name not in data:
                 errors.setdefault(where, []).append(f"неизвестная константа [{name}]")
                 return None
             return resolve_value(data[name], name)
-
         return val
 
     for key, val in data.items():
