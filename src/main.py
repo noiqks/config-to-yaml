@@ -2,6 +2,7 @@
 import sys
 import re
 from collections import namedtuple
+import yaml
 
 
 #читает файл и возвращает текст
@@ -210,9 +211,19 @@ def resolve_constants(data):
 
     return resolved, errors
 
-
-
-
+#подготовка к записи в файл
+def write_yaml(data, output_file):
+    try:
+        with open(output_file, "w", encoding="utf-8") as f:
+            yaml.dump(
+                data,
+                f,
+                allow_unicode=True, 
+                default_flow_style=False, 
+                sort_keys=False  
+            )
+    except Exception as e:
+        print(f"ошибка при записи YAML: {e}")
 
 def main():
     if len(sys.argv) != 3:
@@ -251,6 +262,13 @@ def main():
             for err in errs:
                 print(f"  {i}) {var}: {err}")
                 i += 1
+
+    #6. запись в файл
+    if resolve_errors:
+        print("\nфайл не создан из-за ошибок констант.")
+        return
+    write_yaml(resolved, output_file)
+    print(f"\nуспешно сохранено в {output_file}")
 
 
 if __name__ == "__main__":
